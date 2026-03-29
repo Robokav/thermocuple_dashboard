@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'motion/react';
 
 interface TempToggleProps {
   label: string;
-  value: number | null;
+  value: number | string | null; // Changed to accept string/null
   active: boolean;
   onToggle: () => void;
   onNameChange: (newName: string) => void;
@@ -22,6 +22,12 @@ const TempToggle = React.memo(({ label, value, active, onToggle, onNameChange }:
     onNameChange(editName);
     setIsEditing(false);
   };
+
+  // FIX: Safely parse and format the number
+  const displayValue = useMemo(() => {
+    const num = typeof value === 'string' ? parseFloat(value) : value;
+    return typeof num === 'number' && !isNaN(num) ? `${num.toFixed(1)}°C` : '---';
+  }, [value]);
 
   return (
     <div className={`glass-panel px-3 py-3 rounded-lg flex items-center justify-between transition-all ${!active ? 'opacity-60 grayscale' : 'border-primary/20'}`}>
@@ -49,7 +55,7 @@ const TempToggle = React.memo(({ label, value, active, onToggle, onNameChange }:
           )}
         </div>
         <p className={`font-mono text-xs ${!active ? 'text-on-surface-variant italic' : 'text-primary font-bold'}`}>
-          {value !== null ? `${value.toFixed(1)}°C` : 'OFFLINE'}
+          {active ? displayValue : 'DISABLED'}
         </p>
       </div>
       <button onClick={onToggle} className={`w-8 h-4 rounded-full relative transition-colors flex-shrink-0 ${active ? 'bg-primary/40' : 'bg-surface-variant'}`}>
@@ -70,7 +76,6 @@ export const FurnaceCard: React.FC<FurnaceCardProps> = ({ furnace }) => {
   const [newName, setNewName] = useState(furnace.name);
   const [selectedSensor, setSelectedSensor] = useState(0);
 
-  // Calibration state
   const [calib, setCalib] = useState<SensorCalibration>(furnace.calibrations[0]);
 
   const handleToggle = useCallback((idx: number) => {
@@ -85,23 +90,22 @@ export const FurnaceCard: React.FC<FurnaceCardProps> = ({ furnace }) => {
   const calculateCalibration = useCallback(() => {
     const scale = (calib.targetHigh - calib.targetLow) / (calib.rawHigh - calib.rawLow);
     const offset = calib.targetLow - (calib.rawLow * scale);
-    
     calibrateSensor(furnace.chipId, selectedSensor, offset, scale);
-    
-    // Update local state for visual feedback
     setCalib(prev => ({ ...prev, scale, offset }));
   }, [calib, furnace.chipId, selectedSensor, calibrateSensor]);
 
   const captureRaw = (type: 'low' | 'high') => {
-    const rawVal = Object.values(furnace.rawTemps)[selectedSensor];
+    const rawVal = Object.values(furnace.rawTemps || {})[selectedSensor];
+    const numericRaw = typeof rawVal === 'string' ? parseFloat(rawVal) : rawVal;
+    
     setCalib(prev => ({
       ...prev,
-      [type === 'low' ? 'rawLow' : 'rawHigh']: rawVal
+      [type === 'low' ? 'rawLow' : 'rawHigh']: numericRaw ?? 0
     }));
   };
 
   const isLive = useMemo(() => {
-    return Date.now() - furnace.lastSeen < 5000;
+    return Date.now() - (furnace.lastSeen ?? 0) < 5000;
   }, [furnace.lastSeen]);
 
   return (
@@ -129,7 +133,7 @@ export const FurnaceCard: React.FC<FurnaceCardProps> = ({ furnace }) => {
           ) : (
             <div className="flex items-center gap-2 group">
               <h4 className="font-headline font-bold text-on-surface uppercase tracking-wide text-xs">
-                {furnace.name} <span className="text-[9px] text-on-surface-variant font-mono opacity-60 ml-1">ID: {furnace.chipId.slice(-6)}</span>
+                {furnace.name} <span className="text-[9px] text-on-surface-variant font-mono opacity-60 ml-1">ID: {(furnace.chipId ?? '').slice(-6)}</span>
               </h4>
               <button onClick={() => setIsEditingName(true)} className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-on-surface-variant hover:text-primary">
                 <Edit2 className="w-3 h-3" />
@@ -137,7 +141,7 @@ export const FurnaceCard: React.FC<FurnaceCardProps> = ({ furnace }) => {
             </div>
           )}
         </div>
-        <StatusBadge status={furnace.status} />
+        <StatusBadge status={furnace.status ?? 'OFFLINE'} />
       </div>
 
       <div className="p-4 space-y-4">
@@ -146,8 +150,8 @@ export const FurnaceCard: React.FC<FurnaceCardProps> = ({ furnace }) => {
             <TempToggle 
               key={i}
               label={label} 
-              value={Object.values(furnace.temps)[i]} 
-              active={furnace.enabledSensors[i]}
+              value={Object.values(furnace.temps || {})[i] ?? null} 
+              active={furnace.enabledSensors?.[i] ?? true}
               onToggle={() => handleToggle(i)}
               onNameChange={(newName) => updateSensorName(furnace.chipId, i, newName)}
             />
@@ -194,7 +198,7 @@ export const FurnaceCard: React.FC<FurnaceCardProps> = ({ furnace }) => {
                       <label className="text-[8px] uppercase font-bold text-on-surface-variant">Target Low (°C)</label>
                       <input 
                         type="number"
-                        value={calib.targetLow}
+                        value={calib?.targetLow ?? 0}
                         onChange={(e) => setCalib(prev => ({ ...prev, targetLow: parseFloat(e.target.value) }))}
                         className="w-full bg-surface-container-low border border-outline-variant/40 rounded px-2 py-2 text-xs font-mono text-primary outline-none focus:border-primary"
                       />
@@ -204,7 +208,7 @@ export const FurnaceCard: React.FC<FurnaceCardProps> = ({ furnace }) => {
                       <div className="flex gap-1">
                         <input 
                           readOnly
-                          value={calib.rawLow.toFixed(2)}
+                          value={(calib?.rawLow ?? 0).toFixed(2)}
                           className="flex-1 bg-surface-container-low border border-outline-variant/40 rounded px-2 py-2 text-xs font-mono text-on-surface-variant outline-none"
                         />
                         <button onClick={() => captureRaw('low')} className="px-2 bg-primary/10 text-primary rounded border border-primary/20 hover:bg-primary/20"><Target className="w-3 h-3" /></button>
@@ -217,7 +221,7 @@ export const FurnaceCard: React.FC<FurnaceCardProps> = ({ furnace }) => {
                       <label className="text-[8px] uppercase font-bold text-on-surface-variant">Target High (°C)</label>
                       <input 
                         type="number"
-                        value={calib.targetHigh}
+                        value={calib?.targetHigh ?? 100}
                         onChange={(e) => setCalib(prev => ({ ...prev, targetHigh: parseFloat(e.target.value) }))}
                         className="w-full bg-surface-container-low border border-outline-variant/40 rounded px-2 py-2 text-xs font-mono text-primary outline-none focus:border-primary"
                       />
@@ -227,7 +231,7 @@ export const FurnaceCard: React.FC<FurnaceCardProps> = ({ furnace }) => {
                       <div className="flex gap-1">
                         <input 
                           readOnly
-                          value={calib.rawHigh.toFixed(2)}
+                          value={(calib?.rawHigh ?? 0).toFixed(2)}
                           className="flex-1 bg-surface-container-low border border-outline-variant/40 rounded px-2 py-2 text-xs font-mono text-on-surface-variant outline-none"
                         />
                         <button onClick={() => captureRaw('high')} className="px-2 bg-primary/10 text-primary rounded border border-primary/20 hover:bg-primary/20"><Target className="w-3 h-3" /></button>
@@ -239,11 +243,11 @@ export const FurnaceCard: React.FC<FurnaceCardProps> = ({ furnace }) => {
                 <div className="grid grid-cols-2 gap-3 pt-2 border-t border-outline-variant/10">
                   <div className="flex flex-col">
                     <span className="text-[8px] uppercase text-on-surface-variant font-bold">Calculated Scale</span>
-                    <span className="text-xs font-mono text-tertiary">x{calib.scale.toFixed(4)}</span>
+                    <span className="text-xs font-mono text-tertiary">x{(calib?.scale ?? 1).toFixed(4)}</span>
                   </div>
                   <div className="flex flex-col">
                     <span className="text-[8px] uppercase text-on-surface-variant font-bold">Calculated Offset</span>
-                    <span className="text-xs font-mono text-tertiary">{calib.offset.toFixed(2)}°C</span>
+                    <span className="text-xs font-mono text-tertiary">{(calib?.offset ?? 0).toFixed(2)}°C</span>
                   </div>
                 </div>
 
